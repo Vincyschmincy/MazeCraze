@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maze Craze</title>
+<style>
+  body { background: #000; color: #FFD700; display: flex; justify-content: center; align-items: flex-start; height: 100vh; margin: 0; font-family: 'Arial', sans-serif; overflow: hidden; }
+  canvas { background: #222; border: 4px solid #FFD700; margin-top: 70px; }
+  #title { position: absolute; top: 10px; color: white; font-size: 30px; left: 50%; transform: translateX(-50%); font-family: 'MedievalSharp', cursive; }
+  #levelDisplay, #timerDisplay, #movesDisplay, #leaderboard, #controls, #startButton { position: absolute; color: white; font-size: 16px; }
+  #levelDisplay { left: 10px; top: 60px; }
+  #timerDisplay { right: 10px; top: 10px; }
+  #movesDisplay { right: 10px; top: 40px; }
+  #leaderboard { left: 10px; top: 120px; width: 120px; }
+  #controls { right: 10px; bottom: 20px; display: flex; flex-direction: column; align-items: center; }
+  .arrow { width: 50px; height: 50px; background: #FFD700; color: #000; border: none; margin: 5px; cursor: pointer; font-size: 24px; }
+  #startButton { padding: 10px 20px; background: #FFD700; color: #000; border: none; cursor: pointer; font-size: 20px; font-family: 'MedievalSharp', cursive; left: 50%; top: 50%; transform: translate(-50%, -50%); position: absolute; }
+</style>
+<link href="https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="title">Maze Craze</div>
+<canvas id="gameCanvas" width="540" height="540"></canvas>
+<div id="levelDisplay">Level: 1</div>
+<div id="timerDisplay">Time: 0</div>
+<div id="movesDisplay">Moves Available: 0</div>
+<div id="leaderboard">
+  <h3>Leaderboard</h3>
+  <ol id="leaderboardList"></ol>
+</div>
+<div id="controls">
+  <button class="arrow" id="up">↑</button>
+  <div>
+    <button class="arrow" id="left">←</button>
+    <button class="arrow" id="down">↓</button>
+    <button class="arrow" id="right">→</button>
+  </div>
+</div>
+<button id="startButton">Start Game</button>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const levelDisplay = document.getElementById('levelDisplay');
+  const timerDisplay = document.getElementById('timerDisplay');
+  const movesDisplay = document.getElementById('movesDisplay');
+  const leaderboardList = document.getElementById('leaderboardList');
+  const controls = document.getElementById('controls');
+  const startButton = document.getElementById('startButton');
+  let player = { x: 1, y: 1 };
+  let currentLevel = 1;
+  let timeLeft = 0;
+  let timer;
+  let maze;
+  let movesAvailable = 0;
+  let moveCount = 0;
+  let playerIcon = '🐭';
+  let goalIcon = '🧀';
+  let currentScheme = 'default';
+  let gameStarted = false;
+
+  const schemes = {
+    default: { background: '#222', wall: '#8B4513', path: '#222', player: '#FF0000', goal: '#FFD700' },
+    scheme1: { background: '#333', wall: '#4B0082', path: '#333', player: '#00FF00', goal: '#FFFF00' },
+    scheme2: { background: '#444', wall: '#0000FF', path: '#444', player: '#FFA500', goal: '#00FFFF' }
+  };
+
+  function generateMaze(size) {
+    let maze = Array(size).fill().map(() => Array(size).fill(1));
+    let directions = [
+      { x: 0, y: -2 },
+      { x: 2, y: 0 },
+      { x: 0, y: 2 },
+      { x: -2, y: 0 }
+    ];
+
+    function shuffle(array) {
+      for (let i = array.length - 1; i > 0; i--) {
+        let j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+    }
+
+    function isInBounds(x, y) {
+      return x >= 0 && y >= 0 && x < size && y < size;
+    }
+
+    function carvePassagesFrom(x, y) {
+      maze[y][x] = 0;
+      shuffle(directions);
+      directions.forEach(dir => {
+        let nx = x + dir.x;
+        let ny = y + dir.y;
+        let mx = x + dir.x / 2;
+        let my = y + dir.y / 2;
+        if (isInBounds(nx, ny) && maze[ny][nx] === 1) {
+          maze[my][mx] = 0;
+          carvePassagesFrom(nx, ny);
+        }
+      });
+    }
+
+    carvePassagesFrom(1, 1);
+    maze[1][1] = 0;
+    maze[size - 2][size - 2] = 2;
+
+    return maze;
+  }
+
+  function isReachable(maze) {
+    const directions = [
+      { x: 0, y: -1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: -1, y: 0 }
+    ];
+    const visited = maze.map(row => row.map(cell => cell === 1));
+    const queue = [{ x: 1, y: 1 }];
+    visited[1][1] = true;
+
+    while (queue.length > 0) {
+      const { x, y } = queue.shift();
+      if (x === maze.length - 2 && y === maze.length - 2) return true;
+
+      for (const dir of directions) {
+        const nx = x + dir.x;
+        const ny = y + dir.y;
+        if (nx >= 0 && ny >= 0 && nx < maze.length && ny < maze.length && !visited[ny][nx] && maze[ny][nx] !== 1) {
+          visited[ny][nx] = true;
+          queue.push({ x: nx, y: ny });
+        }
+      }
+    }
+    return false;
+  }
+
+  function drawMaze(maze) {
+    const scheme = schemes[currentScheme];
+    const tileSize = canvas.width / maze.length;
+    ctx.fillStyle = scheme.background;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let y = 0; y < maze.length; y++) {
+      for (let x = 0; x < maze[y].length; x++) {
+        ctx.fillStyle = maze[y][x] === 1 ? scheme.wall : scheme.path;
+        ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+      }
+    }
+    ctx.fillStyle = scheme.goal;
+    ctx.font = `${tileSize}px Arial`;
+    ctx.fillText(goalIcon, (maze.length - 2) * tileSize, (maze.length - 2) * tileSize + tileSize);
+    ctx.fillStyle = scheme.player;
+    ctx.fillText(playerIcon, player.x * tileSize, player.y * tileSize + tileSize);
+  }
+
+  function movePlayer(dx, dy) {
+    if (!gameStarted) return;
+    const tileSize = canvas.width / maze.length;
+    const newX = player.x + dx;
+    const newY = player.y + dy;
+    if (newX >= 0 && newX < maze.length && newY >= 0 && newY < maze.length) {
+      if (maze[newY][newX] !== 1) {
+        player.x = newX;
+        player.y = newY;
+        moveCount++;
+        movesDisplay.textContent = 'Moves Available: ' + (movesAvailable - moveCount);
+        if (maze[newY][newX] === 2) {
+          clearInterval(timer);
+          currentLevel++;
+          levelDisplay.textContent = 'Level: ' + currentLevel;
+          startLevel();
+        } else if (moveCount >= movesAvailable) {
+          clearInterval(timer);
+          alert('Too bad, out of moves!');
+          updateLeaderboard();
+          resetGame();
+        }
+      }
+    }
+    drawMaze(maze);
+  }
+
+  function calculateMinimumMoves(maze) {
+    const directions = [
+      { x: 0, y: -1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: -1, y: 0 }
+    ];
+    const visited = maze.map(row => row.map(cell => cell === 1));
+    const queue = [{ x: 1, y: 1, moves: 0 }];
+    visited[1][1] = true;
+
+    while (queue.length > 0) {
+      const { x, y, moves } = queue.shift();
+      if (x === maze.length - 2 && y === maze.length - 2) return moves;
+
+      for (const dir of directions) {
+        const nx = x + dir.x;
+        const ny = y + dir.y;
+        if (nx >= 0 && ny >= 0 && nx < maze.length && ny < maze.length && !visited[ny][nx] && maze[ny][nx] !== 1) {
+          visited[ny][nx] = true;
+          queue.push({ x: nx, y: ny, moves: moves + 1 });
+        }
+      }
+    }
+    return Infinity; // Should never happen if the maze is generated correctly
+  }
+
+  function startLevel() {
+    const mazeSize = 10 + currentLevel * 2;
+    do {
+      maze = generateMaze(mazeSize);
+    } while (!isReachable(maze));
+
+    player = { x: 1, y: 1 };
+    moveCount = 0;
+    const minimumMoves = calculateMinimumMoves(maze);
+    movesAvailable = Math.ceil(minimumMoves * 1.1); // Always 10% extra moves
+    movesDisplay.textContent = 'Moves Available: ' + movesAvailable;
+    timeLeft = mazeSize * 2; // Example time limit: 2 seconds per maze cell
+    timerDisplay.textContent = 'Time: ' + timeLeft;
+    clearInterval(timer);
+    timer = setInterval(() => {
+      timeLeft--;
+      timerDisplay.textContent = 'Time: ' + timeLeft;
+      if (timeLeft <= 0) {
+        clearInterval(timer);
+        alert('Too bad, out of time!');
+        updateLeaderboard();
+        resetGame();
+      }
+    }, 1000);
+    drawMaze(maze);
+  }
+
+  function resetGame() {
+    currentLevel = 1;
+    levelDisplay.textContent = 'Level: ' + currentLevel;
+    startLevel();
+  }
+
+  function updateLeaderboard() {
+    const scores = JSON.parse(localStorage.getItem('mazeScores')) || [];
+    if (scores.length < 10 || currentLevel - 1 > scores[scores.length - 1].level) {
+      const initials = prompt('Enter your initials (up to 12 characters):').toUpperCase().slice(0, 12);
+      scores.push({ initials, level: currentLevel - 1 });
+      scores.sort((a, b) => b.level - a.level);
+      if (scores.length > 10) scores.length = 10;
+      localStorage.setItem('mazeScores', JSON.stringify(scores));
+    }
+    displayLeaderboard();
+  }
+
+  function displayLeaderboard() {
+    const scores = JSON.parse(localStorage.getItem('mazeScores')) || [];
+    leaderboardList.innerHTML = scores.map(score => `<li>${score.initials}: Level ${score.level}</li>`).join('');
+  }
+
+  window.addEventListener('keydown', function(e) {
+    switch (e.key) {
+      case 'ArrowUp':
+        movePlayer(0, -1);
+        break;
+      case 'ArrowDown':
+        movePlayer(0, 1);
+        break;
+      case 'ArrowLeft':
+        movePlayer(-1, 0);
+        break;
+      case 'ArrowRight':
+        movePlayer(1, 0);
+        break;
+    }
+  });
+
+  document.getElementById('up').addEventListener('click', () => movePlayer(0, -1));
+  document.getElementById('down').addEventListener('click', () => movePlayer(0, 1));
+  document.getElementById('left').addEventListener('click', () => movePlayer(-1, 0));
+  document.getElementById('right').addEventListener('click', () => movePlayer(1, 0));
+
+  startButton.addEventListener('click', () => {
+    gameStarted = true;
+    startLevel();
+    startButton.style.display = 'none';
+  });
+
+  displayLeaderboard();
+  drawMaze(maze);
+});
+</script>
+</body>
+</html>
